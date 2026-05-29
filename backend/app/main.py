@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.keys import router as keys_router
@@ -9,6 +10,12 @@ from app.api.routes.users import router as users_router
 from app.core.db import init_db
 
 app = FastAPI(title="Key Manager")
+
+app.mount(
+    "/uploads",
+    StaticFiles(directory="uploads"),
+    name="uploads",
+)
 
 app.add_middleware(
     CORSMiddleware,
