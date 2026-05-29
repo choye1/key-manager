@@ -46,4 +46,4 @@ async def save_upload_file(file: UploadFile, prefix: str) -> str:
 
     destination.write_bytes(content)
 
-    return str(destination)
+    return f"uploads/{safe_name}"
