@@ -1,6 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import StreamingResponse
+from sqlmodel import Session, select
+from io import BytesIO
 
+
+from io import BytesIO
+from openpyxl import Workbook, load_workbook
 from app.api.deps import get_current_user
 from app.core.db import get_session
 from app.crud import (
@@ -12,9 +17,11 @@ from app.crud import (
 from app.models import (
     IssuedKeyPublic,
     IssuedKeysResponse,
+    Object,
     ObjectCreate,
     ObjectPublic,
     ObjectsPublic,
+    ObjectType,
     User,
     UserRole,
 )
@@ -53,6 +60,87 @@ def read_objects(
     return ObjectsPublic(data=objects, count=len(objects))
 
 
+@router.get("/export")
+def export_objects(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    objects = session.exec(select(Object)).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Objects"
+
+    ws.append(["code", "type", "is_active"])
+
+    for obj in objects:
+        ws.append([
+            obj.code,
+            obj.type.value,
+            obj.is_active,
+        ])
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": "attachment; filename=objects.xlsx"
+        },
+    )
+
+@router.post("/import")
+def import_objects(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+
+    if current_user.role != UserRole.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+
+    contents = file.file.read()
+    wb = load_workbook(BytesIO(contents))
+    ws = wb.active
+
+    created = 0
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        code, object_type, is_active = row
+
+        existing = session.exec(
+            select(Object).where(Object.code == code)
+        ).first()
+
+        if existing:
+            continue
+
+        obj = Object(
+            code=code,
+            type=ObjectType(object_type),
+            is_active=bool(is_active),
+        )
+
+        session.add(obj)
+        created += 1
+
+    session.commit()
+
+    return {
+        "message": f"Imported {created} objects"
+    }
+
 @router.get("/{code}", response_model=ObjectPublic)
 def read_object_by_code(
     code: str,
@@ -88,3 +176,4 @@ def read_issued_keys_for_object(
         count=len(issued_keys),
         data=issued_keys,
     )
+
